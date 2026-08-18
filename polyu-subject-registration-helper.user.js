@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PolyU eStudent Subject Registration Helper
 // @namespace    https://www.polyu.edu.hk/
-// @version      0.1.0
-// @description  Apply an explicit drop/add plan and stop before the final confirmation.
+// @version      0.2.0
+// @description  Apply an explicit drop/add/change plan and stop before the final confirmation.
 // @author       You
 // @match        https://www38.polyu.edu.hk/eStudent/secure/my-subject-registration/*subject-register-select-subject.jsf
 // @match        https://www38.polyu.edu.hk/eStudent/secure/my-subject-registration/*subject-register-select-component.jsf
@@ -98,7 +98,7 @@
           fields.length !== 3
         ) {
           throw new Error(
-            `Invalid Add line ${lineNumber}. Use: SUBJECT | SUBJECT_GROUP | COMPONENT[, COMPONENT]`,
+            `Invalid Add/Change line ${lineNumber}. Use: SUBJECT | SUBJECT_GROUP | COMPONENT[, COMPONENT]`,
           );
         }
 
@@ -126,7 +126,16 @@
     }
 
     if (duplicateAdds.length > 0) {
-      throw new Error(`Duplicate Add subject: ${duplicateAdds[0]}`);
+      throw new Error(`Duplicate Add/Change subject: ${duplicateAdds[0]}`);
+    }
+
+    const overlappingSubject = drop.find((subject) =>
+      addSubjects.includes(subject),
+    );
+    if (overlappingSubject) {
+      throw new Error(
+        `${overlappingSubject} is listed in both Drop and Add/Change. To change its group or components, remove it from Drop.`,
+      );
     }
 
     return { drop, add };
@@ -185,12 +194,25 @@
 
   function getCartRows() {
     return [...document.querySelectorAll(selectors.cartDeleteButton)]
-      .map((button) => ({ button, row: button.closest("tr") }))
-      .filter(({ row }) => row);
+      .map((button) => {
+        const row = button.closest("tr");
+        const subject = normalizeCode(row?.cells?.[1]?.innerText);
+        const registrationType = normalizeText(
+          row?.cells?.[5]?.innerText,
+        ).toUpperCase();
+        return {
+          button,
+          row,
+          subject,
+          isRegistered: registrationType.startsWith("REGISTERED"),
+        };
+      })
+      .filter(({ row, subject }) => row && subject);
   }
 
   function findCartRow(subject) {
-    return getCartRows().find(({ row }) => rowContainsCode(row, subject));
+    const normalizedSubject = normalizeCode(subject);
+    return getCartRows().find((entry) => entry.subject === normalizedSubject);
   }
 
   function cartContainsAddition(addition) {
@@ -243,7 +265,12 @@
   }
 
   function verifyPreviewPlan(plan) {
-    if (!plan || !Array.isArray(plan.drop) || !Array.isArray(plan.add)) {
+    if (
+      !plan ||
+      !Array.isArray(plan.drop) ||
+      !Array.isArray(plan.add) ||
+      !Array.isArray(plan.change)
+    ) {
       return {
         ok: false,
         errors: ["No execution plan is available for Preview verification."],
@@ -271,6 +298,7 @@
     });
 
     const droppedSubjects = new Set(plan.drop);
+    const changedSubjects = new Set(plan.change);
     const additionsBySubject = new Map(
       plan.add.map((addition) => [addition.subject, addition]),
     );
@@ -292,14 +320,13 @@
       }
 
       const entry = matchingEntries[0];
-      const wasDropped = droppedSubjects.has(subject);
       const addition = additionsBySubject.get(subject);
       const expectedStatus =
-        wasDropped && addition
+        addition && changedSubjects.has(subject)
           ? "TO CHANGE GROUP/COMPONENT"
-          : wasDropped
-            ? "TO DROP"
-            : "TO ADD";
+          : addition
+            ? "TO ADD"
+            : "TO DROP";
 
       if (entry.status !== expectedStatus) {
         errors.push(
@@ -450,7 +477,10 @@
     if (state.dropIndex >= plan.drop.length) {
       state.phase = "add";
       state.pendingDrop = null;
-      setProgress(state, "All requested subjects were dropped. Starting additions.");
+      setProgress(
+        state,
+        "All requested subjects were dropped. Starting additions and changes.",
+      );
       return true;
     }
 
@@ -481,7 +511,7 @@
     if (cartContainsAddition(addition)) {
       state.addIndex += 1;
       state.phase = "add";
-      setProgress(state, `Added ${addition.subject}.`);
+      setProgress(state, `Applied ${addition.subject}.`);
       return true;
     }
 
@@ -593,7 +623,10 @@
   async function processAdditions(state, plan) {
     if (state.addIndex >= plan.add.length) {
       state.phase = "proceed-to-preview";
-      setProgress(state, "All additions are in the cart. Proceeding to Preview...");
+      setProgress(
+        state,
+        "All additions and changes are in the cart. Proceeding to Preview...",
+      );
       return true;
     }
 
@@ -682,7 +715,12 @@
     automationBusy = true;
     try {
       const plan = state.plan;
-      if (!plan || !Array.isArray(plan.drop) || !Array.isArray(plan.add)) {
+      if (
+        !plan ||
+        !Array.isArray(plan.drop) ||
+        !Array.isArray(plan.add) ||
+        !Array.isArray(plan.change)
+      ) {
         throw new Error("No execution plan is saved. Reset state and run the plan again.");
       }
 
@@ -709,12 +747,13 @@
   function formatPlanSummary(plan) {
     const mode = isMockMode() ? "MOCK" : "LIVE";
     const drops = plan.drop.length > 0 ? plan.drop.join(", ") : "None";
-    const additions =
+    const changedSubjects = new Set(plan.change);
+    const additionsAndChanges =
       plan.add.length > 0
         ? plan.add
             .map(
               ({ subject, group, components }) =>
-                `${subject} [group ${group}] (${components.join(", ")})`,
+                `${changedSubjects.has(subject) ? "Change" : "Add"}: ${subject} [group ${group}] (${components.join(", ")})`,
             )
             .join("\n")
         : "None";
@@ -722,8 +761,8 @@
       `${mode} subject registration plan`,
       "",
       `Drop: ${drops}`,
-      "Add:",
-      additions,
+      "Add or change:",
+      additionsAndChanges,
       "",
       "The script will stop at Preview and will never click Confirm.",
     ].join("\n");
@@ -732,10 +771,21 @@
   function startAutomation() {
     try {
       const stored = savePlanText();
-      const plan = parsePlan(stored.drop, stored.add);
+      const parsedPlan = parsePlan(stored.drop, stored.add);
       if (isPreviewPage()) {
         throw new Error("Click Modify before starting a new plan.");
       }
+      const registeredSubjects = new Set(
+        getCartRows()
+          .filter(({ isRegistered }) => isRegistered)
+          .map(({ subject }) => subject),
+      );
+      const plan = {
+        ...parsedPlan,
+        change: parsedPlan.add
+          .filter(({ subject }) => registeredSubjects.has(subject))
+          .map(({ subject }) => subject),
+      };
       preflightDrops(plan);
       if (!window.confirm(formatPlanSummary(plan))) return;
 
@@ -767,7 +817,7 @@
 
   function resetAutomationState() {
     const state = defaultState();
-    state.message = "Execution state reset. The Drop/Add text was preserved.";
+    state.message = "Execution state reset. The Drop/Add or Change text was preserved.";
     saveState(state);
   }
 
@@ -843,10 +893,10 @@
         ${isMockMode() ? "MOCK MODE" : "LIVE MODE"}
       </div>
       <label for="polyu-drop-plan">Drop subjects</label>
-      <textarea id="polyu-drop-plan" placeholder="COMP3211"></textarea>
+      <textarea id="polyu-drop-plan" placeholder="COMP0001"></textarea>
       <p class="polyu-help">One subject code per line.</p>
-      <label for="polyu-add-plan">Add subjects by component</label>
-      <textarea id="polyu-add-plan" placeholder="COMP3211 | 1011 | LTL001"></textarea>
+      <label for="polyu-add-plan">Add or change subjects by component</label>
+      <textarea id="polyu-add-plan" placeholder="COMP0001 | 1001 | LTL001"></textarea>
       <p class="polyu-help">Format: SUBJECT | SUBJECT_GROUP | COMPONENT[, COMPONENT]</p>
       <div class="polyu-actions">
         <button type="button" id="polyu-run-plan">Run plan</button>

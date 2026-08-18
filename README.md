@@ -1,6 +1,6 @@
 # PolyU eStudent Subject Registration Helper
 
-A Tampermonkey userscript that drops and adds subjects, proceeds to Preview, verifies the result, and stops before **Confirm**.
+A Tampermonkey userscript that drops, adds, or changes subjects, proceeds to Preview, verifies the result, and stops before **Confirm**.
 
 ## Installation
 
@@ -25,7 +25,7 @@ COMP0001
 COMP0002
 ```
 
-### Add subjects by component
+### Add or change subjects by component
 
 Enter one subject per line in this format:
 
@@ -47,27 +47,25 @@ Replace these examples with codes shown in your own eStudent page.
 - `COMPONENT` is the exact component code.
 - Separate multiple components with commas.
 
-To change a subject's group or component, put the same subject in both fields:
+Use the same format to change the group or components of a subject that is already registered. Do not put that subject in **Drop subjects**:
 
 ```text
-Drop:
-COMP0001
-
-Add:
 COMP0001 | 1001 | LTL001
 ```
+
+The helper automatically reads the shopping cart's registration status to decide whether each line is an addition or a change. A subject listed in both fields is rejected.
 
 ## How to use
 
 1. Confirm that the panel shows the correct **MOCK MODE** or **LIVE MODE** label.
-2. Enter the subjects to drop and add.
+2. Enter the subjects to drop, add, or change.
 3. Click **Run plan**.
 4. Review the summary and approve it only if every code is correct.
-5. Wait while the helper drops subjects, adds subjects, and opens Preview.
+5. Wait while the helper applies the plan and opens Preview.
 6. Check the Preview verification result:
-   - Dropped and added again: `To Change GROUP/COMPONENT`
+   - Existing subject changed through Add/Change: `To Change GROUP/COMPONENT`
    - Dropped only: `TO DROP`
-   - Added only: `TO ADD`
+   - New subject added: `TO ADD`
 7. Independently review every Preview row, subject group, and component.
 8. Click **Confirm** yourself only if everything is correct. Otherwise, click **Modify**.
 
