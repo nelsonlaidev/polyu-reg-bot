@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PolyU eStudent Subject Registration Helper
 // @namespace    https://www.polyu.edu.hk/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Apply an explicit drop/add/change plan and stop before the final confirmation.
 // @author       You
 // @match        https://www38.polyu.edu.hk/eStudent/secure/my-subject-registration/*subject-register-select-subject.jsf
@@ -33,6 +33,7 @@
     componentCheckbox:
       'input[type="checkbox"][id*="ComponentTable"][id$="selectCompSelected_"]',
     addToCartButton: 'input[id$=":selectButton"]',
+    cartTable: 'table[id$=":selectedSubjectTable"]',
     cartDeleteButton: [
       'input[type="image"][id*="rubbishBinButton_"]',
       'input[type="image"][id*="RubbishBinButton_"]',
@@ -193,21 +194,24 @@
   }
 
   function getCartRows() {
-    return [...document.querySelectorAll(selectors.cartDeleteButton)]
-      .map((button) => {
-        const row = button.closest("tr");
+    const table = document.querySelector(selectors.cartTable);
+    if (!table) return [];
+
+    return [...table.rows]
+      .filter((row) => row.cells.length >= 6)
+      .map((row) => {
         const subject = normalizeCode(row?.cells?.[1]?.innerText);
         const registrationType = normalizeText(
           row?.cells?.[5]?.innerText,
         ).toUpperCase();
         return {
-          button,
+          button: row.querySelector(selectors.cartDeleteButton),
           row,
           subject,
           isRegistered: registrationType.startsWith("REGISTERED"),
         };
       })
-      .filter(({ row, subject }) => row && subject);
+      .filter(({ subject }) => subject && subject !== "SUBJECT CODE");
   }
 
   function findCartRow(subject) {
@@ -500,6 +504,11 @@
     if (!cartEntry) {
       throw new Error(`${subject} is not present in the subject cart and cannot be dropped.`);
     }
+    if (!cartEntry.button) {
+      throw new Error(
+        `${subject} cannot be dropped automatically because eStudent does not provide a trash button for it.`,
+      );
+    }
 
     state.pendingDrop = subject;
     setProgress(state, `Dropping ${subject}...`);
@@ -738,9 +747,23 @@
   }
 
   function preflightDrops(plan) {
-    const missing = plan.drop.filter((subject) => !findCartRow(subject));
+    const cartRowsBySubject = new Map(
+      getCartRows().map((entry) => [entry.subject, entry]),
+    );
+    const missing = plan.drop.filter(
+      (subject) => !cartRowsBySubject.has(subject),
+    );
     if (missing.length > 0) {
       throw new Error(`Cannot find Drop subject(s) in the cart: ${missing.join(", ")}.`);
+    }
+
+    const unavailable = plan.drop.filter(
+      (subject) => !cartRowsBySubject.get(subject).button,
+    );
+    if (unavailable.length > 0) {
+      throw new Error(
+        `Cannot drop subject(s) because eStudent does not provide a trash button: ${unavailable.join(", ")}.`,
+      );
     }
   }
 

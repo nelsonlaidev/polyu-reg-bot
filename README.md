@@ -25,6 +25,8 @@ COMP0001
 COMP0002
 ```
 
+If eStudent does not provide a trash button for a requested subject, the helper stops before making any changes. Such subjects may require approval or another official process before they can be dropped.
+
 ### Add or change subjects by component
 
 Enter one subject per line in this format:
